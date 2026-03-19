@@ -48,6 +48,7 @@ def generate_pdf(params):
         # Rozmery pre obsah
         font_size = min(box_width, box_height) * 0.15
         barcode_height = box_height * 0.25
+        # Oprava matematických operácií
         barcode_width_factor = 0.2 * (box_width / 100) * params['barcode_scale']
         
         try:
@@ -78,6 +79,10 @@ def generate_pdf(params):
 
 # --- UI APP ---
 st.title("🔄 Generátor lokácií (otočený o 90°)")
+
+# PRIDANÉ POČÍTADLO NÁVŠTEV (štítok)
+st.markdown("![Návštevy](https://hits.dwyl.com/jongens1/gener-tor-lok-ci-.svg)")
+
 col1, col2 = st.columns(2)
 
 with col1:
