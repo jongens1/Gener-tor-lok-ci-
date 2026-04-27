@@ -6,7 +6,7 @@ from reportlab.lib.units import mm
 import io
 import re
 
-# --- NASTAVENIA STRÁNKY ---
+# --- NASTAVENIA ---
 st.set_page_config(page_title="Generátor lokácií PRO", layout="wide")
 
 def generate_pdf(locations, params):
@@ -14,51 +14,48 @@ def generate_pdf(locations, params):
     c = canvas.Canvas(buffer, pagesize=A4)
     page_width, page_height = A4
     
-    # Rozmery bunky (napr. A5 na stojato = 1 stĺpec, 2 riadky)
     box_width = page_width / params['cols']
     box_height = page_height / params['rows']
 
-    def draw_label(c, x, y, location_code):
+    def draw_location(c, x, y, location_code):
         c.saveState()
         
-        # 1. Presun na stred bunky
-        cx = x + box_width / 2
-        cy = y + box_height / 2
-        c.translate(cx, cy)
+        # Presun na stred bunky
+        center_x = x + box_width / 2
+        center_y = y + box_height / 2
+        c.translate(center_x, center_y)
         
-        # 2. Rotácia obsahu (0 alebo 90 stupňov)
-        if params['rotate_content']:
+        # Rotácia ak je zvolená
+        if params['rotate_90']:
             c.rotate(90)
+            # Po rotácii o 90° sa šírka a výška kresliacej plochy vymenia
             draw_w, draw_h = box_height, box_width
         else:
             draw_w, draw_h = box_width, box_height
 
-        # --- VÝPOČET ROZMEROV ---
-        b_width = params['bar_width_mm'] * mm
-        b_height = params['bar_height_mm'] * mm
-        f_size = params['font_size']
-        
-        # Výpočet pozície (kód hore, text dole)
-        # Súradnice sú relatívne k stredu bunky (0,0)
-        barcode_y_offset = (draw_h * 0.1)  # Mierne nad stredom
-        text_y_offset = -(draw_h * 0.25)   # Pod stredom
+        # --- DYNAMICKÉ VEĽKOSTI ---
+        # Barcode scale určuje hrúbku čiar (v mm)
+        bar_width = params['barcode_scale'] * mm
+        # Výška kódu je 30% výšky bunky, max 100mm
+        bar_height = min(draw_h * 0.3, 100 * mm)
+        # Font size je 20% výšky bunky
+        font_size = draw_h * 0.15
 
         try:
-            # Generovanie čiarového kódu
-            barcode = code128.Code128(location_code, barHeight=b_height, barWidth=b_width)
-            bw = barcode.width
-            # Vykreslenie (centrované horizontálne: -bw/2)
-            barcode.drawOn(c, -bw / 2, barcode_y_offset)
+            barcode = code128.Code128(location_code, barHeight=bar_height, barWidth=bar_width)
+            b_w = barcode.width
+            # Kreslíme kód vycentrovaný (posun o polovicu šírky vľavo)
+            # Umiestnenie: nad stredom
+            barcode.drawOn(c, -b_w / 2, draw_h * 0.05)
         except:
             pass
 
-        # Vykreslenie textu
-        c.setFont("Helvetica-Bold", f_size)
-        c.drawCentredString(0, text_y_offset, location_code)
+        # Text pod kódom
+        c.setFont("Helvetica-Bold", font_size)
+        c.drawCentredString(0, -draw_h * 0.2, location_code)
         
         c.restoreState()
 
-    # Logika stránkovania
     locs_per_page = params['cols'] * params['rows']
     for i, location in enumerate(locations):
         pos = i % locs_per_page
@@ -66,10 +63,9 @@ def generate_pdf(locations, params):
         row = pos // params['cols']
         
         x = col * box_width
-        # ReportLab počíta Y odspodu
         y = page_height - (row + 1) * box_height
         
-        draw_label(c, x, y, location)
+        draw_location(c, x, y, location)
         
         if (i + 1) % locs_per_page == 0 and (i + 1) < len(locations):
             c.showPage()
@@ -78,62 +74,77 @@ def generate_pdf(locations, params):
     buffer.seek(0)
     return buffer
 
-# --- UI APP ---
-st.title("📦 Generátor skladových lokácií")
+# --- UI APP (TVOJE PÔVODNÉ ZADÁVANIE) ---
+st.title("🔄 Generátor lokácií (Opravený)")
 
-col1, col2 = st.columns([1, 1])
+vstup_mode = st.radio("Vyberte spôsob zadania lokácií:", ["Automatický rozsah", "Ručný zoznam (Enter)"], horizontal=True)
+col1, col2 = st.columns(2)
+locations_to_print = []
 
 with col1:
-    st.subheader("1. Dáta")
-    vstup_mode = st.radio("Vstup:", ["Rozsah", "Zoznam"], horizontal=True)
-    
-    locations_to_print = []
-    if vstup_mode == "Rozsah":
+    if vstup_mode == "Automatický rozsah":
+        st.subheader("Konfigurácia blokov")
+        block_count = st.selectbox("Počet blokov:", [2, 3, 4], index=1)
         c1, c2 = st.columns(2)
-        f_n_s = c1.number_input("Číslo od:", 1, 99, 1)
-        f_n_e = c2.number_input("Číslo do:", 1, 99, 2)
-        f_l_s = c1.selectbox("Písmeno od:", [chr(i) for i in range(65, 91)], index=0)
-        f_l_e = c2.selectbox("Písmeno do:", [chr(i) for i in range(65, 91)], index=1)
-        s_max = st.number_input("Segment 2 (polica) do:", 1, 50, 5)
+        f_n_s = c1.number_input("Číslo od (X):", 0, 99, 1)
+        f_n_e = c2.number_input("Číslo do (X):", 0, 99, 8)
+        f_l_s = c1.selectbox("Písmeno od (Y):", [chr(i) for i in range(65, 91)], index=0)
+        f_l_e = c2.selectbox("Písmeno do (Y):", [chr(i) for i in range(65, 91)], index=6)
         
-        for n in range(f_n_s, f_n_e + 1):
-            for l in range(ord(f_l_s), ord(f_l_e) + 1):
-                for s in range(1, s_max + 1):
-                    locations_to_print.append(f"{n}{chr(l)}-{s:02d}")
+        s_s, s_e = st.columns(2)
+        s_s_val = s_s.number_input("Blok 2 od:", 1, 999, 1)
+        s_e_val = s_e.number_input("Blok 2 do:", 1, 999, 10)
+        
+        # Logika pre blok 3 a 4
+        t_s_val, t_e_val = 1, 1
+        fo_s_val, fo_e_val = 1, 1
+        
+        if block_count >= 3:
+            t1, t2 = st.columns(2)
+            t_s_val = t1.number_input("Blok 3 od:", 1, 999, 1)
+            t_e_val = t2.number_input("Blok 3 do:", 1, 999, 10)
+        if block_count == 4:
+            fo1, fo2 = st.columns(2)
+            fo_s_val = fo1.number_input("Blok 4 od:", 1, 999, 1)
+            fo_e_val = fo2.number_input("Blok 4 do:", 1, 999, 10)
+
+        # Generovanie zoznamu
+        first_number_range = range(f_n_s, f_n_e + 1)
+        first_letter_range = [chr(i) for i in range(ord(f_l_s), ord(f_l_e) + 1)]
+        
+        if block_count == 2:
+            locations_to_print = [f"{n}{l}-{s:02d}" for n in first_number_range for l in first_letter_range for s in range(s_s_val, s_e_val + 1)]
+        elif block_count == 3:
+            locations_to_print = [f"{n}{l}-{s:02d}-{t:02d}" for n in first_number_range for l in first_letter_range for s in range(s_s_val, s_e_val + 1) for t in range(t_s_val, t_e_val + 1)]
+        else:
+            locations_to_print = [f"{n}{l}-{s:02d}-{t:02d}-{u:02d}" for n in first_number_range for l in first_letter_range for s in range(s_s_val, s_e_val + 1) for t in range(t_s_val, t_e_val + 1) for u in range(fo_s_val, fo_e_val + 1)]
     else:
-        txt = st.text_area("Lokácie (jedna na riadok):", height=200)
-        locations_to_print = [x.strip() for x in re.split(r'[;,\n\s]+', txt) if x.strip()]
+        st.subheader("Ručné zadanie")
+        input_text = st.text_area("Vložte lokácie (jedna na riadok):", height=300)
+        if input_text.strip():
+            locations_to_print = [x.strip() for x in re.split(r'[;,\n\s]+', input_text) if x.strip()]
 
 with col2:
-    st.subheader("2. Formát a Orientácia")
-    cc1, cc2 = st.columns(2)
-    cols = cc1.number_input("Stĺpce (A4):", 1, 10, 1)
-    rows = cc2.number_input("Riadky (A4):", 1, 10, 2)
+    st.subheader("Rozloženie a tlač")
+    cols = st.number_input("Počet stĺpcov na A4:", 1, 15, 1) # Prednastavené pre A5
+    rows = st.number_input("Počet riadkov na A4:", 1, 25, 2)   # Prednastavené pre A5
     
-    # Možnosť rotácie o 90 stupňov
-    rotate_content = st.toggle("Otočiť kód a text o 90°", value=True)
+    rotate_90 = st.checkbox("Otočiť obsah (kód a text) o 90°", value=True)
     
-    st.divider()
-    st.subheader("3. Veľkosti (v mm / pt)")
-    # Slidery pre presné doladenie
-    b_w = st.slider("Hrúbka čiary kódu (mm):", 0.1, 1.5, 0.5, 0.05)
-    b_h = st.slider("Výška kódu (mm):", 5, 120, 40)
-    f_s = st.slider("Veľkosť písma:", 10, 200, 80)
+    barcode_scale = st.slider("Hrúbka čiar kódu:", 0.1, 2.0, 0.6, 0.05)
+    
+    st.info(f"Veľkosť bunky: {round(210/cols,1)}x{round(297/rows,1)} mm")
 
-    if st.button("🚀 GENEROVAŤ PDF", type="primary", use_container_width=True):
+    if st.button("🚀 Vygenerovať PDF", type="primary"):
         if locations_to_print:
             params = {
-                'cols': cols,
-                'rows': rows,
-                'rotate_content': rotate_content,
-                'bar_width_mm': b_w,
-                'bar_height_mm': b_h,
-                'font_size': f_s
+                'cols': cols, 
+                'rows': rows, 
+                'barcode_scale': barcode_scale,
+                'rotate_90': rotate_90
             }
-            pdf = generate_pdf(locations_to_print, params)
-            st.download_button("⬇️ STIAHNUŤ PDF", pdf, "lokacie.pdf", "application/pdf", use_container_width=True)
+            pdf_buffer = generate_pdf(locations_to_print, params)
+            st.success(f"Pripravených {len(locations_to_print)} lokácií.")
+            st.download_button(label="⬇️ STIAHNUŤ PDF", data=pdf_buffer, file_name="lokacie.pdf", mime="application/pdf")
         else:
             st.error("Zoznam lokácií je prázdny!")
-
-# Pomocná informácia o rozmere bunky
-st.caption(f"Aktuálny rozmer jedného štítka: {round(210/cols, 1)}x{round(297/rows, 1)} mm")
