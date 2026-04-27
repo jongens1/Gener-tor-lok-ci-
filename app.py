@@ -20,39 +20,62 @@ def generate_pdf(locations, params):
     def draw_location(c, x, y, location_code):
         c.saveState()
         
-        # Presun na stred bunky
+        # 1. Mriežka (rámček štítka)
+        c.setLineWidth(0.5)
+        c.setStrokeColorRGB(0, 0, 0)
+        c.rect(x, y, box_width, box_height)
+        
+        # 2. Presun na stred bunky
         center_x = x + box_width / 2
         center_y = y + box_height / 2
         c.translate(center_x, center_y)
         
-        # Rotácia ak je zvolená
+        # 3. Rotácia a určenie rozmerov kresliacej plochy
         if params['rotate_90']:
             c.rotate(90)
-            # Po rotácii o 90° sa šírka a výška kresliacej plochy vymenia
             draw_w, draw_h = box_height, box_width
         else:
             draw_w, draw_h = box_width, box_height
 
-        # --- DYNAMICKÉ VEĽKOSTI ---
-        # Barcode scale určuje hrúbku čiar (v mm)
-        bar_width = params['barcode_scale'] * mm
-        # Výška kódu je 30% výšky bunky, max 100mm
-        bar_height = min(draw_h * 0.3, 100 * mm)
-        # Font size je 20% výšky bunky
-        font_size = draw_h * 0.15
+        # --- DYNAMICKÉ PRISPÔSOBENIE ---
+        
+        # Maximálna šírka obsahu (necháme 5% okraj na každej strane)
+        max_content_width = draw_w * 0.9
+        
+        # A. Text - výpočet veľkosti písma, aby sa zmestil do šírky
+        initial_font_size = draw_h * 0.2  # Skúsime 20% výšky
+        c.setFont("Helvetica-Bold", initial_font_size)
+        
+        # Zmenšujeme font, kým sa text nezmestí do max_content_width
+        current_font_size = initial_font_size
+        while c.stringWidth(location_code, "Helvetica-Bold", current_font_size) > max_content_width:
+            current_font_size -= 1
+            if current_font_size < 10: break
+        
+        c.setFont("Helvetica-Bold", current_font_size)
 
+        # B. Barcode - výpočet barWidth, aby sa zmestil do šírky
+        barcode_height = draw_h * 0.35
+        # Odhadovaný počet modulov v Code128 (približne 11 na znak + réžia)
+        modules_count = (len(location_code) + 2) * 11 
+        estimated_bar_width = (max_content_width / modules_count) * params['barcode_scale']
+        
         try:
-            barcode = code128.Code128(location_code, barHeight=bar_height, barWidth=bar_width)
+            barcode = code128.Code128(location_code, barHeight=barcode_height, barWidth=estimated_bar_width)
             b_w = barcode.width
-            # Kreslíme kód vycentrovaný (posun o polovicu šírky vľavo)
-            # Umiestnenie: nad stredom
+            # Ak je kód po vygenerovaní stále širší ako povolené, zmenšíme ho
+            if b_w > max_content_width:
+                barcode.barWidth = estimated_bar_width * (max_content_width / b_w)
+                b_w = barcode.width
+            
+            # Vykreslenie kódu (nad stred)
             barcode.drawOn(c, -b_w / 2, draw_h * 0.05)
         except:
             pass
 
-        # Text pod kódom
-        c.setFont("Helvetica-Bold", font_size)
-        c.drawCentredString(0, -draw_h * 0.2, location_code)
+        # Vykreslenie textu (pod stred)
+        # Y pozícia je upravená podľa veľkosti fontu
+        c.drawCentredString(0, -draw_h * 0.25, location_code)
         
         c.restoreState()
 
@@ -74,8 +97,8 @@ def generate_pdf(locations, params):
     buffer.seek(0)
     return buffer
 
-# --- UI APP (TVOJE PÔVODNÉ ZADÁVANIE) ---
-st.title("🔄 Generátor lokácií (Opravený)")
+# --- UI APP (Logika nezmenená podľa priania) ---
+st.title("🔄 Generátor lokácií (A5/A4 Grid Edition)")
 
 vstup_mode = st.radio("Vyberte spôsob zadania lokácií:", ["Automatický rozsah", "Ručný zoznam (Enter)"], horizontal=True)
 col1, col2 = st.columns(2)
@@ -95,7 +118,6 @@ with col1:
         s_s_val = s_s.number_input("Blok 2 od:", 1, 999, 1)
         s_e_val = s_e.number_input("Blok 2 do:", 1, 999, 10)
         
-        # Logika pre blok 3 a 4
         t_s_val, t_e_val = 1, 1
         fo_s_val, fo_e_val = 1, 1
         
@@ -126,14 +148,13 @@ with col1:
 
 with col2:
     st.subheader("Rozloženie a tlač")
-    cols = st.number_input("Počet stĺpcov na A4:", 1, 15, 1) # Prednastavené pre A5
-    rows = st.number_input("Počet riadkov na A4:", 1, 25, 2)   # Prednastavené pre A5
+    cols = st.number_input("Počet stĺpcov na A4:", 1, 15, 1)
+    rows = st.number_input("Počet riadkov na A4:", 1, 25, 2)
     
     rotate_90 = st.checkbox("Otočiť obsah (kód a text) o 90°", value=True)
+    barcode_scale = st.slider("Hustota čiarového kódu:", 0.1, 2.0, 0.8, 0.05)
     
-    barcode_scale = st.slider("Hrúbka čiar kódu:", 0.1, 2.0, 0.6, 0.05)
-    
-    st.info(f"Veľkosť bunky: {round(210/cols,1)}x{round(297/rows,1)} mm")
+    st.info(f"Veľkosť štítka: {round(210/cols,1)}x{round(297/rows,1)} mm")
 
     if st.button("🚀 Vygenerovať PDF", type="primary"):
         if locations_to_print:
